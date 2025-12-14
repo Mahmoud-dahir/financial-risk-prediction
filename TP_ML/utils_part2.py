@@ -12,15 +12,18 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 
-# On réutilise la fonction d'évaluation de la partie I (matrice, ROC/AUC, etc.)
+# Même routine d'évaluation que la Partie I (matrice de confusion, ROC/AUC, etc.)
 from utils import run_classifiers_train_test
 
 
 def _read_credit_data(filename="credit.data"):
     """
     Lecture du dataset UCI "credit approval".
-    On lit en str pour pouvoir gérer facilement les '?'.
-    Le fichier peut être séparé par virgules ou par espaces.
+    On charge tout en string pour gérer correctement les valeurs manquantes '?'.
+
+    Le fichier peut être :
+      - séparé par des virgules
+      - ou séparé par des espaces / tabulations
     """
     df = pd.read_csv(filename, header=None, sep=",", dtype=str)
     if df.shape[1] <= 1:
@@ -33,11 +36,12 @@ def _read_credit_data(filename="credit.data"):
 
 
 def _binarize_target(y_txt):
-    """ '+' -> 1 ; '-' -> 0 """
+    """Cible binaire : '+' -> 1 ; '-' -> 0"""
     return (y_txt == "+").astype(int)
 
 
 def _plot_hist_classes(y_bin, title="Répartition des classes"):
+    """Petit histogramme de la répartition des classes."""
     n_pos = int((y_bin == 1).sum())
     n_neg = int((y_bin == 0).sum())
     plt.figure(figsize=(4, 3))
@@ -49,9 +53,12 @@ def _plot_hist_classes(y_bin, title="Répartition des classes"):
 
 def part2_run_numeric_no_missing(filename="credit.data", scaler="standard", show_raw=True):
     """
-    II.1 (énoncé) : on ne garde que les variables numériques,
-    on enlève les lignes incomplètes, puis on compare les modèles.
-    Ensuite on refait la comparaison après normalisation.
+    II.1 : Variables numériques uniquement, sans valeurs manquantes.
+    1) Extraction des colonnes numériques
+    2) Suppression des individus incomplets
+    3) Split 50/50 stratifié
+    4) Comparaison des modèles (brut si show_raw=True)
+    5) Comparaison après normalisation (StandardScaler ou MinMaxScaler)
     """
     print("\n" + "=" * 72)
     print("II.1) Variables numériques (sans valeurs manquantes)")
@@ -63,12 +70,12 @@ def part2_run_numeric_no_missing(filename="credit.data", scaler="standard", show
     # Colonnes numériques (indices UCI)
     col_num = [1, 2, 7, 10, 13, 14]
 
-    # Extraction des variables numériques + nettoyage des '?'
+    # Extraction + conversion float (avec gestion des '?')
     X_num = np.copy(X[:, col_num]).astype(object)
     X_num[X_num == "?"] = np.nan
     X_num = X_num.astype(float)
 
-    # Suppression des lignes avec au moins un NaN
+    # On enlève les lignes qui contiennent au moins un NaN
     mask = ~np.isnan(X_num).any(axis=1)
     X_num_clean = X_num[mask]
     y_clean = _binarize_target(y_txt)[mask]
@@ -76,7 +83,7 @@ def part2_run_numeric_no_missing(filename="credit.data", scaler="standard", show
     print("Shape après nettoyage :", X_num_clean.shape)
     _plot_hist_classes(y_clean, title="Répartition des classes (+/-) après nettoyage")
 
-    # Split 50/50 (stratifié) comme demandé
+    # Split 50/50 stratifié
     X_train, X_test, y_train, y_test = train_test_split(
         X_num_clean, y_clean, test_size=0.5, random_state=1, stratify=y_clean
     )
@@ -92,7 +99,7 @@ def part2_run_numeric_no_missing(filename="credit.data", scaler="standard", show
         print("\nComparaison sur données numériques brutes :")
         run_classifiers_train_test(clfs, X_train, y_train, X_test, y_test)
 
-    # Normalisation
+    # Normalisation (fit sur train, transform sur test)
     if scaler.lower() == "minmax":
         sc = MinMaxScaler()
         tag = "MinMaxScaler"
@@ -108,11 +115,16 @@ def part2_run_numeric_no_missing(filename="credit.data", scaler="standard", show
 
 def part2_run_full_exact_statement(filename="credit.data", use_minmax=False, verbose=True):
     """
-    II.2 (énoncé) : base complète (num + cat) avec valeurs manquantes.
-    - Num : imputation mean + normalisation
-    - Cat : encodage en int, imputation most_frequent, OneHotEncoder
-    - Concat num_norm + cat_onehot
-    Puis comparaison de plusieurs modèles.
+    II.2 : Base complète (num + cat) avec données manquantes.
+
+    Préparation :
+      - Numériques : '?' -> NaN -> float -> imputation(mean) -> normalisation
+      - Catégorielles : encodage en entiers (0 pour manquant) -> imputation(most_frequent) -> OneHotEncoder
+      - Concat : [num_norm] + [cat_onehot]
+
+    Ensuite :
+      - Split 50/50 stratifié
+      - Comparaison de plusieurs modèles
     """
     if verbose:
         print("\n" + "=" * 72)
@@ -126,10 +138,13 @@ def part2_run_full_exact_statement(filename="credit.data", use_minmax=False, ver
         print("Dataset shape (brut) :", df.shape)
         print("Positifs :", int((y == 1).sum()), "| Négatifs :", int((y == 0).sum()))
 
+    # Indices UCI
     col_num = [1, 2, 7, 10, 13, 14]
     col_cat = [0, 3, 4, 5, 6, 8, 9, 11, 12]
 
-    # ---- Numériques : '?' -> NaN -> float -> imputation mean ----
+    # -----------------------
+    # Partie numérique
+    # -----------------------
     X_num = np.copy(X[:, col_num]).astype(object)
     X_num[X_num == "?"] = np.nan
     X_num = X_num.astype(float)
@@ -140,10 +155,13 @@ def part2_run_full_exact_statement(filename="credit.data", use_minmax=False, ver
     scaler = MinMaxScaler() if use_minmax else StandardScaler()
     X_num = scaler.fit_transform(X_num)
 
-    # ---- Catégorielles : encodage int + imputation most_frequent ----
+    # -----------------------
+    # Partie catégorielle
+    # -----------------------
     X_cat = np.copy(X[:, col_cat]).astype(object)
     X_cat_int = np.zeros(X_cat.shape, dtype=int)
 
+    # Encodage colonne par colonne : 0 = manquant, 1..K = catégories
     for j in range(len(col_cat)):
         col = X_cat[:, j].astype(str)
         miss = (col == "?")
@@ -151,7 +169,6 @@ def part2_run_full_exact_statement(filename="credit.data", use_minmax=False, ver
         col_no_miss = col[~miss]
         _, val_idx = np.unique(col_no_miss, return_inverse=True)
 
-        # 0 = manquant, 1..K = vraies catégories
         X_cat_int[~miss, j] = val_idx + 1
         X_cat_int[miss, j] = 0
 
@@ -165,7 +182,9 @@ def part2_run_full_exact_statement(filename="credit.data", use_minmax=False, ver
 
     X_cat_bin = ohe.fit_transform(X_cat_imp)
 
-    # Dataset final
+    # -----------------------
+    # Concat + split + modèles
+    # -----------------------
     X_final = np.hstack([X_num, X_cat_bin])
 
     if verbose:

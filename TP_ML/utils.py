@@ -32,13 +32,16 @@ warnings.filterwarnings("ignore")
 np.set_printoptions(threshold=10000, suppress=True)
 
 # ============================================================
-# Q1 - Chargement des donnees + split train/test (50/50)
+# Q1 — Chargement des données + split train/test (50/50)
 # ============================================================
 
 def load_and_split_data(filename, sep=";"):
     """
-    Charge le fichier credit_scoring.csv, affiche quelques stats simples,
-    puis fait un split 50/50 (train/test) avec random_state=1.
+    Charge le fichier credit_scoring.csv, affiche la taille et la répartition
+    des classes, puis réalise un split train/test en 50/50 avec stratification
+    (random_state=1 pour la reproductibilité).
+
+    Retourne : X_train, X_test, y_train, y_test, df
     """
     try:
         df = pd.read_csv(filename, sep=sep)
@@ -61,32 +64,33 @@ def load_and_split_data(filename, sep=";"):
 
 
 # ============================================================
-# Q2 - Evaluation + comparaison des classifieurs
+# Q2 — Évaluation + comparaison des classifieurs
 # ============================================================
 
 def evaluation(model, X_test, y_test, model_name, business_choice="precision"):
     """
-    Affiche:
+    Évalue un modèle sur X_test / y_test et affiche :
       - matrice de confusion
-      - accuracy / precision / recall
-      - ROC + AUC
-    Retourne un score final = (accuracy + critere_metier) / 2
+      - accuracy, précision, rappel
+      - courbe ROC + AUC
 
-    business_choice:
-      - "precision" (par defaut)
-      - "recall"
-      - "best" : max(precision, recall) (si tu veux coller a "meilleur des deux")
+    Le score de comparaison utilisé est :
+      score_final = (accuracy + critère_métier) / 2
+
+    business_choice :
+      - "precision" : on privilégie la précision (cas typique en credit scoring)
+      - "recall"    : on privilégie le rappel
+      - "best"      : on prend max(précision, rappel)
     """
     y_pred = model.predict(X_test)
 
-    # Score continu pour ROC/AUC (proba si dispo, sinon decision_function)
+    # Pour ROC/AUC : on utilise un score continu si possible (proba ou decision_function)
     if hasattr(model, "predict_proba"):
         y_score = model.predict_proba(X_test)[:, 1]
     elif hasattr(model, "decision_function"):
         y_score = model.decision_function(X_test)
     else:
-        y_score = y_pred  # fallback
-
+        y_score = y_pred  
     cm = confusion_matrix(y_test, y_pred)
     acc = accuracy_score(y_test, y_pred)
     prec = precision_score(y_test, y_pred, zero_division=0)
@@ -116,7 +120,7 @@ def evaluation(model, X_test, y_test, model_name, business_choice="precision"):
     print(f"AUC:      {auc:.3f}")
     print(f"Final score = (Accuracy + {crit_name})/2 : {score_final:.3f}")
 
-    # Courbe ROC (si possible)
+    # Courbe ROC 
     try:
         fpr, tpr, _ = roc_curve(y_test, y_score)
         plt.plot(fpr, tpr, label=f"{model_name} (AUC={auc:.2f})")
@@ -128,8 +132,8 @@ def evaluation(model, X_test, y_test, model_name, business_choice="precision"):
 
 def run_classifiers_train_test(classifiers, X_train, y_train, X_test, y_test, business_choice="precision"):
     """
-    Entraine chaque classifieur du dictionnaire "classifiers", evalue sur le test,
-    trace les ROC et renvoie le meilleur modele selon le score final.
+    Entraîne chaque classifieur du dictionnaire, évalue sur le test,
+    trace les ROC et renvoie le meilleur modèle selon le score final.
     """
     results = {}
     best_score = -np.inf
@@ -161,13 +165,13 @@ def run_classifiers_train_test(classifiers, X_train, y_train, X_test, y_test, bu
 
 
 # ============================================================
-# Q3 - Normalisation (StandardScaler)
+# Q3 — Normalisation (StandardScaler)
 # ============================================================
 
 def run_normalization_and_compare(X_train, X_test, y_train, y_test, classifiers, business_choice="precision"):
     """
-    Normalisation standard: fit sur train, transform sur test.
-    Puis comparaison des classifieurs.
+    Applique une normalisation (StandardScaler) en respectant la méthode :
+    fit uniquement sur le train, puis transform sur le test.
     """
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
@@ -184,13 +188,13 @@ def run_normalization_and_compare(X_train, X_test, y_train, y_test, classifiers,
 
 
 # ============================================================
-# Q4 - ACP (3 composantes) + concat aux features normalisees
+# Q4 — ACP (3 composantes) + concat aux features normalisées
 # ============================================================
 
 def enrichir_donnees(X_train_sc, X_test_sc):
     """
-    ACP sur train, transform sur test, puis concatene les 3 composantes
-    aux features normalisees.
+    Calcule PCA(3) sur le train normalisé, applique la projection au test,
+    puis concatène les 3 composantes aux variables normalisées.
     """
     print("PCA computation + concatenation")
     pca = PCA(n_components=3)
@@ -205,13 +209,14 @@ def enrichir_donnees(X_train_sc, X_test_sc):
 
 
 # ============================================================
-# Q5 - Selection de variables (RF importance + nb optimal + SHAP)
+# Q5 — Sélection de variables (importance RF + best_k + SHAP)
 # ============================================================
 
 def calcul_importance_variables(Xtrain, Ytrain, nom_cols):
     """
-    Importance des variables via RandomForest (n_estimators=1000).
-    Conforme a l'enonce: on calcule aussi std et on l'affiche en xerr.
+    Calcule l'importance des variables avec une RandomForest (1000 arbres).
+    Affiche l'ordre décroissant et un graphique avec l'écart-type (xerr),
+    comme indiqué dans l'énoncé.
     """
     print("\n[Q5.1] RandomForest feature importances")
 
@@ -239,9 +244,9 @@ def calcul_importance_variables(Xtrain, Ytrain, nom_cols):
 
 def selection_nombre_optimal(Xtrain, Ytrain, Xtest, Ytest, sorted_idx):
     """
-    Choix du nombre de variables a garder.
-    Ici on suit ton approche (MLP) et on regarde l'evolution de l'accuracy
-    quand on ajoute les variables les plus importantes une par une.
+    Détermine combien de variables conserver en ajoutant progressivement
+    les variables les plus importantes, puis en observant l'évolution
+    de l'accuracy sur la base de test.
     """
     print("\n[Q5.2] Choosing the number of features (accuracy curve)")
 
@@ -269,7 +274,9 @@ def selection_nombre_optimal(Xtrain, Ytrain, Xtest, Ytest, sorted_idx):
 
 def explicabilite_shap(Xtrain, Ytrain, nom_cols):
     """
-    Explicabilite globale avec SHAP (si la lib est installee).
+    Ajoute une étape d'explicabilité globale avec SHAP.
+    Si SHAP n'est pas disponible (ou erreur d'exécution), on affiche un message
+    et on continue le pipeline.
     """
     print("\n[Q5.3] SHAP explainability (global)")
 
@@ -282,7 +289,6 @@ def explicabilite_shap(Xtrain, Ytrain, nom_cols):
         explainer = shap.Explainer(model)
         shap_values_obj = explainer(Xtrain)
 
-        # Selon la version SHAP / modele, la forme peut varier
         if len(shap_values_obj.shape) == 3:
             vals = shap_values_obj[:, :, 1]
         else:
@@ -294,13 +300,13 @@ def explicabilite_shap(Xtrain, Ytrain, nom_cols):
 
 
 # ============================================================
-# Q6 - Tuning (GridSearchCV) sur (accuracy+precision)/2
+# Q6 — Tuning (GridSearchCV) sur (accuracy + precision) / 2
 # ============================================================
 
 def optimize_best_model_mlp(X_train_full, y_train, sorted_idx, best_k):
     """
-    Optimise un MLP via GridSearchCV, en gardant les best_k variables
-    (selon sorted_idx). Le score utilise (accuracy+precision)/2.
+    Optimise un MLP via GridSearchCV en ne gardant que les best_k variables
+    les plus importantes. Le critère optimisé est (accuracy + precision) / 2.
     """
     print(f"\n[Q6] GridSearchCV on MLP (top {best_k} features)")
 
@@ -341,16 +347,16 @@ def optimize_best_model_mlp(X_train_full, y_train, sorted_idx, best_k):
 
 
 # ============================================================
-# Q7 - Pipeline final + sauvegarde pickle (train/test)
+# Q7 — Pipeline final + sauvegarde pickle (train/test)
 # ============================================================
 
 def create_and_save_pipeline(best_mlp, best_k, X_train, y_train, pickle_name="credit_scoring.pkl"):
     """
-    Pipeline de production (train/test):
+    Pipeline "production" entraîné sur la base d'apprentissage (train/test) :
       - StandardScaler
-      - FeatureUnion (ID + PCA(3))  -> concat features normalisees + 3 composantes
-      - RFE(RandomForest)          -> selection de best_k variables
-      - MLP (avec meilleurs params)
+      - FeatureUnion : concat (features normalisées) + (PCA(3))
+      - RFE (RandomForest) : sélection de best_k variables
+      - MLP : avec les meilleurs paramètres issus du tuning
     """
     print("\n[Q7] Building the final pipeline (train/test)")
 
@@ -389,17 +395,17 @@ def create_and_save_pipeline(best_mlp, best_k, X_train, y_train, pickle_name="cr
 
 
 # ============================================================
-# Q8 - Orchestration train/test split
+# Q8 — Orchestration train/test split
 # ============================================================
 
 def pipeline_generation_train_test_split(filename="credit_scoring.csv", business_choice="precision"):
     """
-    Orchestration Q1 -> Q8:
-      - load/split
-      - comparaison brut / normalise / normalise+ACP
-      - importance + choix best_k + shap
-      - tuning
-      - pipeline final + pickle
+    Chaîne complète Q1 → Q8 :
+      - chargement + split
+      - comparaison brut / normalisé / normalisé + PCA
+      - importance RF + choix best_k + SHAP
+      - tuning MLP
+      - création + sauvegarde du pipeline final
     """
     print("\n=========== STEP 0: Load & split ===========")
     X_train, X_test, y_train, y_test, df = load_and_split_data(filename)
@@ -443,12 +449,12 @@ def pipeline_generation_train_test_split(filename="credit_scoring.csv", business
 
 
 # ============================================================
-# Q10 - Validation croisee (sans fuite de donnees)
+# Q10 — Validation croisée (sans fuite de données)
 # ============================================================
 
 def build_cv_classifiers():
     """
-    Dictionnaire des classifieurs a comparer en CV (Q10).
+    Dictionnaire de classifieurs à comparer en validation croisée (Q10).
     """
     clfs_cv = {
         "CART": DecisionTreeClassifier(criterion="gini", random_state=1),
@@ -465,7 +471,7 @@ def build_cv_classifiers():
         "RF_200": RandomForestClassifier(n_estimators=200, random_state=1),
     }
 
-    # XGBoost si disponible (optionnel)
+    # XGBoost 
     try:
         from xgboost import XGBClassifier
 
@@ -487,9 +493,9 @@ def build_cv_classifiers():
 
 def prepare_dataset_raw_for_cv(filename="credit_scoring.csv", sep=";"):
     """
-    Pour la CV, on charge uniquement X_raw et y.
-    Important: normalisation et ACP seront faites dans le Pipeline pendant la CV,
-    pour respecter la methode (fit sur train du fold, transform sur test du fold).
+    Prépare X_raw et y pour la validation croisée.
+    La normalisation et la PCA sont faites dans le Pipeline pendant la CV
+    pour éviter toute fuite (fit sur train du fold, transform sur test du fold).
     """
     try:
         df = pd.read_csv(filename, sep=sep)
@@ -506,10 +512,10 @@ def prepare_dataset_raw_for_cv(filename="credit_scoring.csv", sep=";"):
 
 def _preprocess_steps(mode):
     """
-    Construit les etapes de preprocessing pour la CV:
+    Construit les étapes de prétraitement utilisées dans la CV :
       - "raw"  : aucune transformation
       - "norm" : StandardScaler
-      - "acp"  : StandardScaler + FeatureUnion(ID + PCA(3)) pour concatener les 3 composantes
+      - "acp"  : StandardScaler + concat PCA(3) via FeatureUnion
     """
     if mode == "raw":
         return []
@@ -525,19 +531,18 @@ def _preprocess_steps(mode):
 
 def run_classifiers_cv(clfs, X_raw, y, n_splits=10, mode="raw"):
     """
-    Compare plusieurs classifieurs via CV 10-fold et affiche:
+    Compare plusieurs classifieurs via CV 10-fold et affiche :
       - accuracy (moyenne +/- std)
       - AUC (moyenne +/- std)
-      - score metier (accuracy+precision)/2 (moyenne +/- std)
-      - temps d'execution
+      - score métier = (accuracy + precision) / 2 (moyenne +/- std)
+      - temps d'exécution
 
-    Le preprocessing est fait dans un Pipeline pour eviter la fuite de donnees.
+    Le prétraitement est intégré dans un Pipeline pour éviter la fuite de données.
     """
     print("\n===== CROSS-VALIDATION =====")
     print(f"Mode: {mode} | X_raw shape (before preprocessing): {X_raw.shape}")
     if mode == "acp":
         print("Note: PCA concat happens inside the pipeline (13 -> 16 features per fold).")
-
 
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=0)
 
@@ -559,7 +564,7 @@ def run_classifiers_cv(clfs, X_raw, y, n_splits=10, mode="raw"):
     for name, clf in clfs.items():
         print(f"\n--- {name} ---")
 
-        # Pipeline = preprocessing (eventuel) + classifieur
+        # Modèle = prétraitement (selon le mode) + classifieur
         model = Pipeline(prep + [("CLF", clf)])
 
         start = time.time()
@@ -603,15 +608,16 @@ def run_classifiers_cv(clfs, X_raw, y, n_splits=10, mode="raw"):
 
 def tune_best_model(best_name, X_raw, y, mode="acp"):
     """
-    Tuning du meilleur modele apres la CV.
-    Important: on tune un Pipeline complet (preprocessing + modele) pour eviter la fuite de donnees.
-    On retourne ensuite uniquement le classifieur (pas le pipeline), car il sera reintegre dans le pipeline final.
+    Tuning du meilleur modèle après la CV.
+    On tune un Pipeline complet (prétraitement + modèle) afin de garder la
+    même logique “sans fuite de données”.
+
+    Retourne : uniquement le classifieur final (best_pipe.named_steps["CLF"]).
     """
     my_scorer = make_scorer(
         lambda yt, yp: (accuracy_score(yt, yp) + precision_score(yt, yp, zero_division=0)) / 2
     )
 
-    # Preprocessing identique a ce qu'on a utilise pour choisir le best model
     prep = _preprocess_steps(mode)
     base_clf = None
     param_grid = None
@@ -642,7 +648,6 @@ def tune_best_model(best_name, X_raw, y, mode="acp"):
         }
 
     else:
-        # Si pas de grille prevue, on garde simplement le modele tel quel
         print(f"No tuning grid for {best_name}. Keeping default parameters for this model.")
         return build_cv_classifiers()[best_name]
 
@@ -661,18 +666,19 @@ def tune_best_model(best_name, X_raw, y, mode="acp"):
     print("Best params:", grid.best_params_)
     print("Best tuning score (5-fold CV):", round(grid.best_score_, 3))
 
-    # On renvoie uniquement le classifieur optimise
     best_pipe = grid.best_estimator_
     return best_pipe.named_steps["CLF"]
 
 
 def create_and_save_cv_pipeline(best_estimator, k_features, X_raw, y, pickle_name="credit_scoring_cv.pkl"):
     """
-    Pipeline final (version CV) a mettre "en prod":
+    Pipeline final “version CV” :
       - StandardScaler
-      - FeatureUnion (ID + PCA(3))  -> concat des 3 composantes
-      - SelectKBest                 -> selection de k_features
+      - concat PCA(3) via FeatureUnion
+      - SelectKBest (k_features)
       - classifieur final
+
+    Entraîne sur tout le dataset (X_raw, y), puis sauvegarde le pickle.
     """
     final_pipeline = Pipeline(
         [
@@ -694,11 +700,11 @@ def create_and_save_cv_pipeline(best_estimator, k_features, X_raw, y, pickle_nam
 
 def pipeline_generation_cv(filename="credit_scoring.csv"):
     """
-    Orchestration Q10:
+    Orchestration Q10 :
       - CV sur raw / norm / acp (sans fuite)
-      - choix du meilleur algo sur le cas "acp"
-      - tuning du meilleur algo (sans fuite)
-      - creation + sauvegarde du pipeline final
+      - choix du meilleur algo sur le mode "acp"
+      - tuning du meilleur algo (toujours via pipeline)
+      - création + sauvegarde du pipeline final
     """
     print("\n=========== CV STEP 0: Load raw dataset ===========")
     X_raw, y, _ = prepare_dataset_raw_for_cv(filename)
@@ -730,7 +736,6 @@ def pipeline_generation_cv(filename="credit_scoring.csv"):
 
     best_estimator = tune_best_model(best_name, X_raw, y, mode="acp")
 
-    # k_features: a adapter selon tes choix (enonce: selection de variables)
     k_features = 13
 
     final_pipeline = create_and_save_cv_pipeline(
