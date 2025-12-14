@@ -12,21 +12,12 @@ from sklearn.feature_selection import SelectKBest, f_classif
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.ensemble import (
-    RandomForestClassifier,
-    BaggingClassifier,
-    AdaBoostClassifier
-)
+from sklearn.ensemble import RandomForestClassifier, BaggingClassifier, AdaBoostClassifier
 from sklearn.preprocessing import StandardScaler, FunctionTransformer
 from sklearn.decomposition import PCA
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.feature_selection import RFE
-from sklearn.model_selection import (
-    train_test_split,
-    GridSearchCV,
-    KFold,
-    cross_validate
-)
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold, cross_validate
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -40,30 +31,28 @@ from sklearn.metrics import (
 warnings.filterwarnings("ignore")
 np.set_printoptions(threshold=10000, suppress=True)
 
+# ============================================================
+# Q1 - Chargement des donnees + split train/test (50/50)
+# ============================================================
 
-# ------------------------------------------------------------
-# 0. CHARGEMENT ET SPLIT (Q1)
-# ------------------------------------------------------------
-
-def load_and_split_data(filename, sep=';'):
+def load_and_split_data(filename, sep=";"):
     """
-    Charge le fichier, affiche quelques stats, et fait un split 50/50
-    avec stratification.
-    Retourne : X_train, X_test, y_train, y_test, df
+    Charge le fichier credit_scoring.csv, affiche quelques stats simples,
+    puis fait un split 50/50 (train/test) avec random_state=1.
     """
     try:
         df = pd.read_csv(filename, sep=sep)
-    except:
-        df = pd.read_csv(filename, sep=',')
+    except Exception:
+        df = pd.read_csv(filename, sep=",")
 
     data = df.values
     X = data[:, :-1].astype(float)
     y = data[:, -1].astype(float)
 
-    n_pos = np.sum(y == 1)
-    n_neg = np.sum(y == 0)
-    print(f"Dataset : {df.shape}")
-    print(f"Répartition : {n_pos} Positifs ({n_pos/len(y):.2%}) / {n_neg} Négatifs")
+    n_pos = int(np.sum(y == 1))
+    n_neg = int(np.sum(y == 0))
+    print(f"Dataset shape: {df.shape}")
+    print(f"Classes: {n_pos} positifs ({n_pos/len(y):.2%}) / {n_neg} negatifs")
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.5, random_state=1, stratify=y
@@ -71,25 +60,32 @@ def load_and_split_data(filename, sep=';'):
     return X_train, X_test, y_train, y_test, df
 
 
-# ------------------------------------------------------------
-# 1. COMPARAISON DES CLASSIFIEURS (Q2)
-# ------------------------------------------------------------
+# ============================================================
+# Q2 - Evaluation + comparaison des classifieurs
+# ============================================================
 
-def evaluation(model, X_test, y_test, model_name):
+def evaluation(model, X_test, y_test, model_name, business_choice="precision"):
     """
-    Affiche confusion, accuracy, précision, rappel, AUC,
-    et ajoute la courbe ROC sur la figure courante.
-    Retourne le score métier (acc + préc) / 2.
+    Affiche:
+      - matrice de confusion
+      - accuracy / precision / recall
+      - ROC + AUC
+    Retourne un score final = (accuracy + critere_metier) / 2
+
+    business_choice:
+      - "precision" (par defaut)
+      - "recall"
+      - "best" : max(precision, recall) (si tu veux coller a "meilleur des deux")
     """
     y_pred = model.predict(X_test)
 
-    # ✅ score continu pour ROC/AUC
+    # Score continu pour ROC/AUC (proba si dispo, sinon decision_function)
     if hasattr(model, "predict_proba"):
         y_score = model.predict_proba(X_test)[:, 1]
     elif hasattr(model, "decision_function"):
         y_score = model.decision_function(X_test)
     else:
-        y_score = y_pred  # fallback (moins bon, mais évite de casser)
+        y_score = y_pred  # fallback
 
     cm = confusion_matrix(y_test, y_pred)
     acc = accuracy_score(y_test, y_pred)
@@ -101,14 +97,26 @@ def evaluation(model, X_test, y_test, model_name):
     except Exception:
         auc = float("nan")
 
-    score_final = (acc + prec) / 2
+    if business_choice == "recall":
+        crit = rec
+        crit_name = "Recall"
+    elif business_choice == "best":
+        crit = max(prec, rec)
+        crit_name = "Best(Prec/Rec)"
+    else:
+        crit = prec
+        crit_name = "Precision"
+
+    score_final = (acc + crit) / 2
 
     print(f"\n--- {model_name} ---")
-    print(f"Matrice :\n{cm}")
-    print(f"Accuracy : {acc:.3f} | Précision : {prec:.3f} | Rappel : {rec:.3f}")
-    print(f"AUC      : {auc:.3f}")
-    print(f"👉 Score Final : {score_final:.3f}")
+    print("Confusion matrix:")
+    print(cm)
+    print(f"Accuracy: {acc:.3f} | Precision: {prec:.3f} | Recall: {rec:.3f}")
+    print(f"AUC:      {auc:.3f}")
+    print(f"Final score = (Accuracy + {crit_name})/2 : {score_final:.3f}")
 
+    # Courbe ROC (si possible)
     try:
         fpr, tpr, _ = roc_curve(y_test, y_score)
         plt.plot(fpr, tpr, label=f"{model_name} (AUC={auc:.2f})")
@@ -118,74 +126,73 @@ def evaluation(model, X_test, y_test, model_name):
     return score_final
 
 
-
-def run_classifiers_train_test(classifiers, X_train, y_train, X_test, y_test):
+def run_classifiers_train_test(classifiers, X_train, y_train, X_test, y_test, business_choice="precision"):
     """
-    Entraîne chaque classifieur du dict 'classifiers' et les évalue.
-    Affiche les courbes ROC et retourne :
-      - le meilleur modèle
-      - le dict des scores
+    Entraine chaque classifieur du dictionnaire "classifiers", evalue sur le test,
+    trace les ROC et renvoie le meilleur modele selon le score final.
     """
     results = {}
-    best_score = 0
+    best_score = -np.inf
     best_model_obj = None
-    best_model_name = ""
+    best_model_name = None
 
     plt.figure(figsize=(8, 6))
+
     for name, model in classifiers.items():
         model.fit(X_train, y_train)
-        score = evaluation(model, X_test, y_test, name)
+        score = evaluation(model, X_test, y_test, name, business_choice=business_choice)
         results[name] = score
+
         if score > best_score:
             best_score = score
             best_model_obj = model
             best_model_name = name
 
-    plt.plot([0, 1], [0, 1], 'k--', label='Aléatoire')
-    plt.title("Comparaison des Courbes ROC")
-    plt.xlabel("Taux de Faux Positifs")
-    plt.ylabel("Taux de Vrais Positifs")
+    plt.plot([0, 1], [0, 1], "k--", label="Random")
+    plt.title("ROC curves comparison")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
     plt.legend()
     plt.grid(True)
     plt.show()
 
-    print(f"\n🏆 Le meilleur modèle est : {best_model_name} avec un score de {best_score:.3f}")
+    print(f"\nBest model: {best_model_name} | best score: {best_score:.3f}")
     return best_model_obj, results
 
 
-# ------------------------------------------------------------
-# 2. NORMALISATION (Q3)
-# ------------------------------------------------------------
+# ============================================================
+# Q3 - Normalisation (StandardScaler)
+# ============================================================
 
-def run_normalization_and_compare(X_train, X_test, y_train, y_test, classifiers):
+def run_normalization_and_compare(X_train, X_test, y_train, y_test, classifiers, business_choice="precision"):
     """
-    Applique StandardScaler (fit sur train uniquement),
-    puis relance la comparaison des classifieurs.
+    Normalisation standard: fit sur train, transform sur test.
+    Puis comparaison des classifieurs.
     """
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    print("\n" + "="*50)
-    print("COMPARAISON APRÈS NORMALISATION")
-    print("="*50)
+    print("\n" + "=" * 50)
+    print("COMPARISON AFTER STANDARDIZATION")
+    print("=" * 50)
 
-    _best, _scores = run_classifiers_train_test(
-        classifiers, X_train_scaled, y_train, X_test_scaled, y_test
+    run_classifiers_train_test(
+        classifiers, X_train_scaled, y_train, X_test_scaled, y_test, business_choice=business_choice
     )
     return X_train_scaled, X_test_scaled
 
 
-# ------------------------------------------------------------
-# 3. ACP + CONCAT (Q4)
-# ------------------------------------------------------------
+# ============================================================
+# Q4 - ACP (3 composantes) + concat aux features normalisees
+# ============================================================
 
 def enrichir_donnees(X_train_sc, X_test_sc):
     """
-    Calcule une ACP (3 composantes) sur les données normalisées,
-    puis concatène les 3 composantes aux features initiales.
+    ACP sur train, transform sur test, puis concatene les 3 composantes
+    aux features normalisees.
     """
-    print("--- Calcul ACP et Concaténation ---")
+    print("PCA computation + concatenation")
     pca = PCA(n_components=3)
     X_train_pca = pca.fit_transform(X_train_sc)
     X_test_pca = pca.transform(X_test_sc)
@@ -193,95 +200,110 @@ def enrichir_donnees(X_train_sc, X_test_sc):
     X_train_final = np.hstack([X_train_sc, X_train_pca])
     X_test_final = np.hstack([X_test_sc, X_test_pca])
 
-    print(f"✅ Dimensions après concaténation : {X_train_final.shape} (16 variables)")
+    print(f"New train shape after concat: {X_train_final.shape}")
     return X_train_final, X_test_final
 
 
-# ------------------------------------------------------------
-# 4. SÉLECTION DE VARIABLES (Q5)
-# ------------------------------------------------------------
+# ============================================================
+# Q5 - Selection de variables (RF importance + nb optimal + SHAP)
+# ============================================================
 
 def calcul_importance_variables(Xtrain, Ytrain, nom_cols):
     """
-    Utilise un RandomForest pour calculer l'importance des variables
-    et affiche un barplot trié.
+    Importance des variables via RandomForest (n_estimators=1000).
+    Conforme a l'enonce: on calcule aussi std et on l'affiche en xerr.
     """
-    print("\n--- 1. Importance (RF) ---")
+    print("\n[Q5.1] RandomForest feature importances")
+
     clf = RandomForestClassifier(n_estimators=1000, random_state=1)
     clf.fit(Xtrain, Ytrain)
+
     importances = clf.feature_importances_
+    std = np.std([tree.feature_importances_ for tree in clf.estimators_], axis=0)
     sorted_idx = np.argsort(importances)[::-1]
 
-    print("Top 5 variables :", nom_cols[sorted_idx[:5]])
+    print("Features sorted by importance:")
+    print(nom_cols[sorted_idx])
 
     padding = np.arange(Xtrain.shape[1]) + 0.5
     plt.figure(figsize=(10, 8))
-    plt.barh(padding, importances[sorted_idx], align='center')
+    plt.barh(padding, importances[sorted_idx], xerr=std[sorted_idx], align="center")
     plt.yticks(padding, nom_cols[sorted_idx])
-    plt.xlabel("Importance Relative")
-    plt.title("Importance (avec ACP)")
+    plt.xlabel("Relative importance")
+    plt.title("Variable importance (RF)")
     plt.gca().invert_yaxis()
     plt.show()
+
     return sorted_idx
 
 
 def selection_nombre_optimal(Xtrain, Ytrain, Xtest, Ytest, sorted_idx):
     """
-    Teste un MLP sur les f meilleures variables (f=1..p)
-    et retourne le nombre optimal best_k.
+    Choix du nombre de variables a garder.
+    Ici on suit ton approche (MLP) et on regarde l'evolution de l'accuracy
+    quand on ajoute les variables les plus importantes une par une.
     """
-    print("\n--- 2. Sélection Optimale (MLP) ---")
+    print("\n[Q5.2] Choosing the number of features (accuracy curve)")
+
     model = MLPClassifier(hidden_layer_sizes=(40, 20), random_state=1, max_iter=500)
     scores = np.zeros(Xtrain.shape[1])
 
     for f in range(Xtrain.shape[1]):
-        cols = sorted_idx[:f+1]
+        cols = sorted_idx[: f + 1]
         model.fit(Xtrain[:, cols], Ytrain)
         y_pred = model.predict(Xtest[:, cols])
         scores[f] = np.round(accuracy_score(Ytest, y_pred), 3)
 
     plt.figure(figsize=(8, 4))
-    plt.plot(scores, marker='o')
-    plt.title("Evolution Accuracy MLP")
+    plt.plot(scores, marker="o")
+    plt.title("Accuracy vs number of selected features")
+    plt.xlabel("Number of features")
+    plt.ylabel("Accuracy")
     plt.grid(True)
     plt.show()
 
-    best_k = np.argmax(scores) + 1
-    print(f"👉 Nombre optimal trouvé : {best_k}")
+    best_k = int(np.argmax(scores) + 1)
+    print(f"Best_k found: {best_k}")
     return best_k
 
 
 def explicabilite_shap(Xtrain, Ytrain, nom_cols):
     """
-    Explique un RandomForest via SHAP (globale).
+    Explicabilite globale avec SHAP (si la lib est installee).
     """
-    print("\n--- 3. Explicabilité (SHAP) ---")
+    print("\n[Q5.3] SHAP explainability (global)")
+
     try:
         import shap
-        shap.initjs()
+
         model = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=1)
         model.fit(Xtrain, Ytrain)
+
         explainer = shap.Explainer(model)
         shap_values_obj = explainer(Xtrain)
+
+        # Selon la version SHAP / modele, la forme peut varier
         if len(shap_values_obj.shape) == 3:
             vals = shap_values_obj[:, :, 1]
         else:
             vals = shap_values_obj
+
         shap.summary_plot(vals, Xtrain, feature_names=nom_cols)
     except Exception as e:
-        print(f"Erreur SHAP: {e}")
+        print(f"SHAP not available or failed: {e}")
 
 
-# ------------------------------------------------------------
-# 5. TUNING DU MLP (Q6)
-# ------------------------------------------------------------
+# ============================================================
+# Q6 - Tuning (GridSearchCV) sur (accuracy+precision)/2
+# ============================================================
 
 def optimize_best_model_mlp(X_train_full, y_train, sorted_idx, best_k):
     """
-    Sélectionne les best_k meilleures variables (sur X_train_full)
-    et optimise le MLP via GridSearchCV avec le critère (acc+prec)/2.
+    Optimise un MLP via GridSearchCV, en gardant les best_k variables
+    (selon sorted_idx). Le score utilise (accuracy+precision)/2.
     """
-    print(f"\n--- Optimisation du MLP sur les {best_k} meilleures variables ---")
+    print(f"\n[Q6] GridSearchCV on MLP (top {best_k} features)")
+
     cols_to_keep = sorted_idx[:best_k]
     X_train_opt = X_train_full[:, cols_to_keep]
 
@@ -289,14 +311,15 @@ def optimize_best_model_mlp(X_train_full, y_train, sorted_idx, best_k):
         "hidden_layer_sizes": [(40, 20), (60, 30)],
         "alpha": [0.0001, 0.001, 0.01],
         "learning_rate_init": [0.001, 0.01],
-        "solver": ["adam", "lbfgs"]
+        "solver": ["adam", "lbfgs"],
     }
 
     my_scorer = make_scorer(
         lambda y_true, y_pred: (
-            accuracy_score(y_true, y_pred) +
-            precision_score(y_true, y_pred, zero_division=0)
-        ) / 2
+            accuracy_score(y_true, y_pred)
+            + precision_score(y_true, y_pred, zero_division=0)
+        )
+        / 2
     )
 
     base_mlp = MLPClassifier(max_iter=1000, random_state=1)
@@ -307,256 +330,263 @@ def optimize_best_model_mlp(X_train_full, y_train, sorted_idx, best_k):
         cv=5,
         scoring=my_scorer,
         n_jobs=-1,
-        verbose=1
+        verbose=1,
     )
-
     grid.fit(X_train_opt, y_train)
 
-    print(f"✅ Meilleurs paramètres trouvés : {grid.best_params_}")
-    print(f"✅ Meilleur score de validation (CV) : {grid.best_score_:.3f}")
+    print("Best params:", grid.best_params_)
+    print("Best CV score:", round(grid.best_score_, 3))
 
     return grid.best_estimator_, cols_to_keep
 
 
-# ------------------------------------------------------------
-# 6. PIPELINE STYLE PROF (Q7)
-# ------------------------------------------------------------
+# ============================================================
+# Q7 - Pipeline final + sauvegarde pickle (train/test)
+# ============================================================
 
 def create_and_save_pipeline(best_mlp, best_k, X_train, y_train, pickle_name="credit_scoring.pkl"):
     """
-    Crée un pipeline :
+    Pipeline de production (train/test):
       - StandardScaler
-      - FeatureUnion(ID, PCA(3))
-      - RFE(RandomForest, n_features=best_k)
-      - MLP optimisé
-    Entraîne sur X_train / y_train (13 features brutes) et sauvegarde.
+      - FeatureUnion (ID + PCA(3))  -> concat features normalisees + 3 composantes
+      - RFE(RandomForest)          -> selection de best_k variables
+      - MLP (avec meilleurs params)
     """
-    print("\n--- Création du Pipeline de Production  ---")
-    print(f"Nombre de variables sélectionnées (best_k) : {best_k}")
+    print("\n[Q7] Building the final pipeline (train/test)")
 
-    best_params = best_mlp.get_params()
-    final_mlp = MLPClassifier(**best_params)
+    final_mlp = MLPClassifier(**best_mlp.get_params())
 
-    P = Pipeline([
-        ('S', StandardScaler()),
-        ('FU', FeatureUnion([
-            ('ID', FunctionTransformer()),
-            ('PCA', PCA(n_components=3))
-        ])),
-        ('RFE', RFE(
-            estimator=RandomForestClassifier(n_estimators=1000, random_state=1),
-            n_features_to_select=best_k
-        )),
-        ('MLP', final_mlp)
-    ])
+    P = Pipeline(
+        [
+            ("S", StandardScaler()),
+            (
+                "FU",
+                FeatureUnion(
+                    [
+                        ("ID", FunctionTransformer()),
+                        ("PCA", PCA(n_components=3)),
+                    ]
+                ),
+            ),
+            (
+                "RFE",
+                RFE(
+                    estimator=RandomForestClassifier(n_estimators=1000, random_state=1),
+                    n_features_to_select=best_k,
+                ),
+            ),
+            ("MLP", final_mlp),
+        ]
+    )
 
     P.fit(X_train, y_train)
 
     with open(pickle_name, "wb") as f:
         pickle.dump(P, f)
 
-    print(f"✅ Pipeline sauvegardé sous '{pickle_name}'")
+    print(f"Pipeline saved to: {pickle_name}")
     return P
 
 
-# ------------------------------------------------------------
-# 7. ORCHESTRATION TRAIN/TEST SPLIT (Q8)
-# ------------------------------------------------------------
+# ============================================================
+# Q8 - Orchestration train/test split
+# ============================================================
 
-def pipeline_generation_train_test_split(filename="credit_scoring.csv"):
+def pipeline_generation_train_test_split(filename="credit_scoring.csv", business_choice="precision"):
     """
-    Orchestration 1 :
-      - chargement + split
-      - comparaison brut / normalisé / ACP
-      - importance + sélection
-      - tuning MLP
-      - création + sauvegarde du pipeline
-    Retourne le pipeline final.
+    Orchestration Q1 -> Q8:
+      - load/split
+      - comparaison brut / normalise / normalise+ACP
+      - importance + choix best_k + shap
+      - tuning
+      - pipeline final + pickle
     """
-    print("\n=========== ÉTAPE 0 : Chargement & Split ===========")
+    print("\n=========== STEP 0: Load & split ===========")
     X_train, X_test, y_train, y_test, df = load_and_split_data(filename)
 
     clfs = {
-        'CART': DecisionTreeClassifier(random_state=1),
-        'KNN': KNeighborsClassifier(n_neighbors=5),
-        'MLP': MLPClassifier(hidden_layer_sizes=(40, 20), random_state=1)
+        "CART": DecisionTreeClassifier(random_state=1),
+        "KNN": KNeighborsClassifier(n_neighbors=5),
+        "MLP": MLPClassifier(hidden_layer_sizes=(40, 20), random_state=1),
     }
 
-    print("\n=========== ÉTAPE 1 : Données BRUTES ===========")
-    _ , _ = run_classifiers_train_test(clfs, X_train, y_train, X_test, y_test)
+    print("\n=========== STEP 1: Raw data ===========")
+    run_classifiers_train_test(clfs, X_train, y_train, X_test, y_test, business_choice=business_choice)
 
-    print("\n=========== ÉTAPE 2 : Données NORMALISÉES ===========")
+    print("\n=========== STEP 2: Standardized data ===========")
     X_train_scaled, X_test_scaled = run_normalization_and_compare(
-        X_train, X_test, y_train, y_test, clfs
+        X_train, X_test, y_train, y_test, clfs, business_choice=business_choice
     )
 
-    print("\n=========== ÉTAPE 3 : NORMALISÉ + ACP (Hybride) ===========")
+    print("\n=========== STEP 3: Standardized + PCA concat ===========")
     X_train_final, X_test_final = enrichir_donnees(X_train_scaled, X_test_scaled)
 
-    print("\n" + "="*50)
-    print("COMPARAISON SUR DONNÉES NORMALISÉES + ACP (Stratégie Hybride)")
-    print("="*50)
-
-    _, _ = run_classifiers_train_test(clfs, X_train_final, y_train, X_test_final, y_test)
+    print("\nComparison on standardized + PCA-concat features")
+    run_classifiers_train_test(clfs, X_train_final, y_train, X_test_final, y_test, business_choice=business_choice)
 
     feature_names = df.columns[:-1]
     nom_cols_final = np.append(feature_names, ["PCA1", "PCA2", "PCA3"])
 
-    print("\n=========== ÉTAPE 4 : IMPORTANCE & SÉLECTION ===========")
+    print("\n=========== STEP 4: Feature selection (importance + best_k + shap) ===========")
     sorted_indices = calcul_importance_variables(X_train_final, y_train, nom_cols_final)
     best_k = selection_nombre_optimal(X_train_final, y_train, X_test_final, y_test, sorted_indices)
     explicabilite_shap(X_train_final, y_train, nom_cols_final)
 
-    print("\n=========== ÉTAPE 5 : TUNING DU MLP ===========")
-    best_mlp_optimized, features_indices = optimize_best_model_mlp(
-        X_train_final, y_train, sorted_indices, best_k
-    )
+    print("\n=========== STEP 5: Tuning ===========")
+    best_mlp_optimized, _ = optimize_best_model_mlp(X_train_final, y_train, sorted_indices, best_k)
 
-    print("\n=========== ÉTAPE 6 : PIPELINE FINAL ===========")
-    final_pipeline = create_and_save_pipeline(
-        best_mlp_optimized, best_k, X_train, y_train
-    )
+    print("\n=========== STEP 6: Final pipeline + pickle ===========")
+    final_pipeline = create_and_save_pipeline(best_mlp_optimized, best_k, X_train, y_train)
 
-    print("\n=========== ORCHESTRATION TERMINÉE ✅ ===========")
+    print("\nOrchestration finished.")
     return final_pipeline
 
 
-# ------------------------------------------------------------
-# 8. PARTIE VALIDATION CROISÉE (Q10)
-# ------------------------------------------------------------
+# ============================================================
+# Q10 - Validation croisee (sans fuite de donnees)
+# ============================================================
 
 def build_cv_classifiers():
     """
-    Construit un dictionnaire de classifieurs pour la validation croisée.
+    Dictionnaire des classifieurs a comparer en CV (Q10).
     """
     clfs_cv = {
-        'CART': DecisionTreeClassifier(criterion="gini", random_state=1),
-        'ID3': DecisionTreeClassifier(criterion="entropy", random_state=1),
-        'Stump': DecisionTreeClassifier(max_depth=1, random_state=1),
-        'MLP_20_10': MLPClassifier(hidden_layer_sizes=(20, 10), max_iter=1000, random_state=1),
-        'KNN_5': KNeighborsClassifier(n_neighbors=5),
-        'Bagging': BaggingClassifier(
+        "CART": DecisionTreeClassifier(criterion="gini", random_state=1),
+        "ID3": DecisionTreeClassifier(criterion="entropy", random_state=1),
+        "Stump": DecisionTreeClassifier(max_depth=1, random_state=1),
+        "MLP_20_10": MLPClassifier(hidden_layer_sizes=(20, 10), max_iter=1000, random_state=1),
+        "KNN_5": KNeighborsClassifier(n_neighbors=5),
+        "Bagging": BaggingClassifier(
             estimator=DecisionTreeClassifier(random_state=1),
             n_estimators=200,
-            random_state=1
+            random_state=1,
         ),
-
-        'AdaBoost': AdaBoostClassifier(
-            n_estimators=200,
-            random_state=1
-        ),
-        'RF_200': RandomForestClassifier(
-            n_estimators=200,
-            random_state=1
-        )
+        "AdaBoost": AdaBoostClassifier(n_estimators=200, random_state=1),
+        "RF_200": RandomForestClassifier(n_estimators=200, random_state=1),
     }
 
-    # Optionnel : XGBoost si dispo
+    # XGBoost si disponible (optionnel)
     try:
         from xgboost import XGBClassifier
-        clfs_cv['XGB_200'] = XGBClassifier(
+
+        clfs_cv["XGB_200"] = XGBClassifier(
             n_estimators=200,
             max_depth=4,
             learning_rate=0.1,
             subsample=0.8,
             colsample_bytree=0.8,
-            objective='binary:logistic',
-            eval_metric='logloss',
-            random_state=1
+            objective="binary:logistic",
+            eval_metric="logloss",
+            random_state=1,
         )
     except Exception:
-        print("⚠️ XGBoost non disponible, on continue sans lui.")
+        print("XGBoost not installed, continuing without it.")
 
     return clfs_cv
 
 
-def prepare_datasets_for_cv(filename="credit_scoring.csv", sep=';'):
+def prepare_dataset_raw_for_cv(filename="credit_scoring.csv", sep=";"):
     """
-    Prépare les 3 jeux pour la CV :
-      - X_raw  : brut
-      - X_norm : normalisé
-      - X_acp  : normalisé + ACP (3 dims)
+    Pour la CV, on charge uniquement X_raw et y.
+    Important: normalisation et ACP seront faites dans le Pipeline pendant la CV,
+    pour respecter la methode (fit sur train du fold, transform sur test du fold).
     """
     try:
         df = pd.read_csv(filename, sep=sep)
-    except:
-        df = pd.read_csv(filename, sep=',')
+    except Exception:
+        df = pd.read_csv(filename, sep=",")
 
     data = df.values
     X_raw = data[:, :-1].astype(float)
     y = data[:, -1].astype(float)
 
-    scaler = StandardScaler()
-    X_norm = scaler.fit_transform(X_raw)
-
-    pca = PCA(n_components=3)
-    X_pca = pca.fit_transform(X_norm)
-    X_acp = np.hstack([X_norm, X_pca])
-
-    feature_names = df.columns[:-1]
-    nom_cols_final = np.append(feature_names, ["PCA1", "PCA2", "PCA3"])
-
-    print(f"Jeu original   : {X_raw.shape}")
-    print(f"Jeu normalisé  : {X_norm.shape}")
-    print(f"Jeu norm+ACP   : {X_acp.shape}")
-
-    return X_raw, X_norm, X_acp, y, feature_names, nom_cols_final
+    print(f"Raw dataset shape: {X_raw.shape}")
+    return X_raw, y, df.columns[:-1]
 
 
-def run_classifiers_cv(clfs, X, y, n_splits=10):
+def _preprocess_steps(mode):
     """
-    Compare plusieurs classifieurs via validation croisée KFold.
-    Pour chaque classifieur :
-      - Accuracy (moy ± std)
-      - AUC (moy ± std)
-      - Score métier (acc+prec)/2 (moy ± std)
-      - Temps d'exécution
+    Construit les etapes de preprocessing pour la CV:
+      - "raw"  : aucune transformation
+      - "norm" : StandardScaler
+      - "acp"  : StandardScaler + FeatureUnion(ID + PCA(3)) pour concatener les 3 composantes
     """
-    print("\n===== VALIDATION CROISÉE SUR CE JEU DE DONNÉES =====")
-    print(f"X shape : {X.shape}, y shape : {y.shape}")
+    if mode == "raw":
+        return []
+    if mode == "norm":
+        return [("S", StandardScaler())]
+    if mode == "acp":
+        return [
+            ("S", StandardScaler()),
+            ("FU", FeatureUnion([("ID", FunctionTransformer()), ("PCA", PCA(n_components=3))])),
+        ]
+    raise ValueError("mode must be in {'raw','norm','acp'}")
+
+
+def run_classifiers_cv(clfs, X_raw, y, n_splits=10, mode="raw"):
+    """
+    Compare plusieurs classifieurs via CV 10-fold et affiche:
+      - accuracy (moyenne +/- std)
+      - AUC (moyenne +/- std)
+      - score metier (accuracy+precision)/2 (moyenne +/- std)
+      - temps d'execution
+
+    Le preprocessing est fait dans un Pipeline pour eviter la fuite de donnees.
+    """
+    print("\n===== CROSS-VALIDATION =====")
+    print(f"Mode: {mode} | X_raw shape (before preprocessing): {X_raw.shape}")
+    if mode == "acp":
+        print("Note: PCA concat happens inside the pipeline (13 -> 16 features per fold).")
+
+
     kf = KFold(n_splits=n_splits, shuffle=True, random_state=0)
 
     scoring = {
-        'accuracy': 'accuracy',
-        'roc_auc': 'roc_auc',
-        'score_metier': make_scorer(
+        "accuracy": "accuracy",
+        "roc_auc": "roc_auc",
+        "score_metier": make_scorer(
             lambda y_true, y_pred: (
-                accuracy_score(y_true, y_pred) +
-                precision_score(y_true, y_pred, zero_division=0)
-            ) / 2
-        )
+                accuracy_score(y_true, y_pred)
+                + precision_score(y_true, y_pred, zero_division=0)
+            )
+            / 2
+        ),
     }
 
+    prep = _preprocess_steps(mode)
     results = {}
 
     for name, clf in clfs.items():
         print(f"\n--- {name} ---")
+
+        # Pipeline = preprocessing (eventuel) + classifieur
+        model = Pipeline(prep + [("CLF", clf)])
+
         start = time.time()
         cv_res = cross_validate(
-            clf,
-            X,
+            model,
+            X_raw,
             y,
             cv=kf,
             scoring=scoring,
             n_jobs=-1,
-            return_train_score=False
+            return_train_score=False,
         )
-        end = time.time()
-        delta = end - start
+        delta = time.time() - start
 
-        acc_mean = cv_res['test_accuracy'].mean()
-        acc_std = cv_res['test_accuracy'].std()
+        acc_mean = cv_res["test_accuracy"].mean()
+        acc_std = cv_res["test_accuracy"].std()
 
-        auc_mean = cv_res['test_roc_auc'].mean()
-        auc_std = cv_res['test_roc_auc'].std()
+        auc_mean = cv_res["test_roc_auc"].mean()
+        auc_std = cv_res["test_roc_auc"].std()
 
-        met_mean = cv_res['test_score_metier'].mean()
-        met_std = cv_res['test_score_metier'].std()
+        met_mean = cv_res["test_score_metier"].mean()
+        met_std = cv_res["test_score_metier"].std()
 
-        print(f"Accuracy        : {acc_mean:.3f} ± {acc_std:.3f}")
-        print(f"AUC             : {auc_mean:.3f} ± {auc_std:.3f}")
-        print(f"Score métier    : {met_mean:.3f} ± {met_std:.3f}")
-        print(f"Temps (s)       : {delta:.2f}")
+        print(f"Accuracy     : {acc_mean:.3f} +/- {acc_std:.3f}")
+        print(f"AUC          : {auc_mean:.3f} +/- {auc_std:.3f}")
+        print(f"Score metier : {met_mean:.3f} +/- {met_std:.3f}")
+        print(f"Time (s)     : {delta:.2f}")
 
         results[name] = {
             "accuracy_mean": acc_mean,
@@ -565,107 +595,127 @@ def run_classifiers_cv(clfs, X, y, n_splits=10):
             "auc_std": auc_std,
             "score_metier_mean": met_mean,
             "score_metier_std": met_std,
-            "time_sec": delta
+            "time_sec": delta,
         }
 
     return results
 
-def tune_best_model(best_name, X, y):
+
+def tune_best_model(best_name, X_raw, y, mode="acp"):
     """
-    Tuning du meilleur modèle trouvé en CV.
-    Retourne best_estimator_.
+    Tuning du meilleur modele apres la CV.
+    Important: on tune un Pipeline complet (preprocessing + modele) pour eviter la fuite de donnees.
+    On retourne ensuite uniquement le classifieur (pas le pipeline), car il sera reintegre dans le pipeline final.
     """
     my_scorer = make_scorer(
         lambda yt, yp: (accuracy_score(yt, yp) + precision_score(yt, yp, zero_division=0)) / 2
     )
 
+    # Preprocessing identique a ce qu'on a utilise pour choisir le best model
+    prep = _preprocess_steps(mode)
+    base_clf = None
+    param_grid = None
+
     if best_name.startswith("XGB"):
         from xgboost import XGBClassifier
-        base = XGBClassifier(
+
+        base_clf = XGBClassifier(
             objective="binary:logistic",
             eval_metric="logloss",
-            random_state=1
+            random_state=1,
         )
         param_grid = {
-            "n_estimators": [200, 400],
-            "max_depth": [3, 4, 6],
-            "learning_rate": [0.05, 0.1],
-            "subsample": [0.8, 1.0],
-            "colsample_bytree": [0.8, 1.0]
+            "CLF__n_estimators": [200, 400],
+            "CLF__max_depth": [3, 4, 6],
+            "CLF__learning_rate": [0.05, 0.1],
+            "CLF__subsample": [0.8, 1.0],
+            "CLF__colsample_bytree": [0.8, 1.0],
         }
 
     elif best_name.startswith("RF"):
-        base = RandomForestClassifier(random_state=1)
+        base_clf = RandomForestClassifier(random_state=1)
         param_grid = {
-            "n_estimators": [200, 400],
-            "max_depth": [None, 10, 20],
-            "min_samples_split": [2, 5],
-            "min_samples_leaf": [1, 2]
+            "CLF__n_estimators": [200, 400],
+            "CLF__max_depth": [None, 10, 20],
+            "CLF__min_samples_split": [2, 5],
+            "CLF__min_samples_leaf": [1, 2],
         }
 
     else:
-        # fallback : pas de tuning, on renvoie le modèle tel quel
-        print("⚠️ Pas de grille de tuning prévue pour", best_name, "=> modèle gardé tel quel.")
+        # Si pas de grille prevue, on garde simplement le modele tel quel
+        print(f"No tuning grid for {best_name}. Keeping default parameters for this model.")
         return build_cv_classifiers()[best_name]
 
+    pipe = Pipeline(prep + [("CLF", base_clf)])
+
     grid = GridSearchCV(
-        base,
+        pipe,
         param_grid=param_grid,
         cv=5,
         scoring=my_scorer,
         n_jobs=-1,
-        verbose=1
+        verbose=1,
     )
-    grid.fit(X, y)
+    grid.fit(X_raw, y)
 
-    print("✅ Best params (tuning) :", grid.best_params_)
-    print("✅ Best score tuning (CV 5-fold) :", round(grid.best_score_, 3))
-    return grid.best_estimator_
+    print("Best params:", grid.best_params_)
+    print("Best tuning score (5-fold CV):", round(grid.best_score_, 3))
+
+    # On renvoie uniquement le classifieur optimise
+    best_pipe = grid.best_estimator_
+    return best_pipe.named_steps["CLF"]
 
 
 def create_and_save_cv_pipeline(best_estimator, k_features, X_raw, y, pickle_name="credit_scoring_cv.pkl"):
     """
-    Pipeline CV final (ENTRAÎNÉ puis sauvegardé) :
-      StandardScaler -> FeatureUnion(ID + PCA3) -> SelectKBest -> best_estimator
+    Pipeline final (version CV) a mettre "en prod":
+      - StandardScaler
+      - FeatureUnion (ID + PCA(3))  -> concat des 3 composantes
+      - SelectKBest                 -> selection de k_features
+      - classifieur final
     """
-    final_pipeline = Pipeline([
-        ('S', StandardScaler()),
-        ('FU', FeatureUnion([
-            ('ID', FunctionTransformer()),
-            ('PCA', PCA(n_components=3))
-        ])),
-        ('SKB', SelectKBest(score_func=f_classif, k=k_features)),
-        ('CLF', best_estimator)
-    ])
+    final_pipeline = Pipeline(
+        [
+            ("S", StandardScaler()),
+            ("FU", FeatureUnion([("ID", FunctionTransformer()), ("PCA", PCA(n_components=3))])),
+            ("SKB", SelectKBest(score_func=f_classif, k=k_features)),
+            ("CLF", best_estimator),
+        ]
+    )
 
     final_pipeline.fit(X_raw, y)
 
     with open(pickle_name, "wb") as f:
         pickle.dump(final_pipeline, f)
 
-    print(f"✅ Pipeline (version CV) sauvegardé sous '{pickle_name}'")
+    print(f"CV pipeline saved to: {pickle_name}")
     return final_pipeline
 
 
-
-
 def pipeline_generation_cv(filename="credit_scoring.csv"):
-    print("\n=========== CV ÉTAPE 0 : Préparation des jeux de données ===========")
-    X_raw, X_norm, X_acp, y, feature_names, nom_cols_final = prepare_datasets_for_cv(filename)
+    """
+    Orchestration Q10:
+      - CV sur raw / norm / acp (sans fuite)
+      - choix du meilleur algo sur le cas "acp"
+      - tuning du meilleur algo (sans fuite)
+      - creation + sauvegarde du pipeline final
+    """
+    print("\n=========== CV STEP 0: Load raw dataset ===========")
+    X_raw, y, _ = prepare_dataset_raw_for_cv(filename)
 
-    print("\n=========== CV ÉTAPE 1 : Construction des classifieurs ===========")
+    print("\n=========== CV STEP 1: Build classifiers dict ===========")
     clfs_cv = build_cv_classifiers()
 
-    print("\n=========== CV ÉTAPE 2 : Comparaison sur DONNÉES ORIGINALES ===========")
-    res_raw = run_classifiers_cv(clfs_cv, X_raw, y)
+    print("\n=========== CV STEP 2: CV on raw data ===========")
+    res_raw = run_classifiers_cv(clfs_cv, X_raw, y, mode="raw")
 
-    print("\n=========== CV ÉTAPE 3 : Comparaison sur DONNÉES NORMALISÉES ===========")
-    res_norm = run_classifiers_cv(clfs_cv, X_norm, y)
+    print("\n=========== CV STEP 3: CV on standardized data ===========")
+    res_norm = run_classifiers_cv(clfs_cv, X_raw, y, mode="norm")
 
-    print("\n=========== CV ÉTAPE 4 : Comparaison sur DONNÉES NORMALISÉES + ACP ===========")
-    res_acp = run_classifiers_cv(clfs_cv, X_acp, y)
+    print("\n=========== CV STEP 4: CV on standardized + PCA-concat data ===========")
+    res_acp = run_classifiers_cv(clfs_cv, X_raw, y, mode="acp")
 
-    print("\n=========== CV ÉTAPE 5 : Sélection du meilleur algorithme ===========")
+    print("\n=========== CV STEP 5: Pick best model (based on score metier) ===========")
     best_name = None
     best_score = -np.inf
 
@@ -674,27 +724,22 @@ def pipeline_generation_cv(filename="credit_scoring.csv"):
             best_score = metrics["score_metier_mean"]
             best_name = name
 
-    print(f"\n🏆 Meilleur algorithme (CV, données norm+ACP) : {best_name} avec score métier moyen = {best_score:.3f}")
+    print(f"Best model on mode='acp': {best_name} | mean score metier: {best_score:.3f}")
 
-    print("\n=========== CV ÉTAPE 6 : Sélection + Tuning + Pipeline final ===========")
+    print("\n=========== CV STEP 6: Tuning + final pipeline ===========")
 
-    # 1) Tuning du meilleur modèle sur le dataset CV (X_acp)
-    best_estimator = tune_best_model(best_name, X_acp, y)
+    best_estimator = tune_best_model(best_name, X_raw, y, mode="acp")
 
-    # 2) SelectKBest s’applique après FeatureUnion => sur 16 features
-    k_features = 13  # tu peux mettre 16 si tu veux garder toutes les features
+    # k_features: a adapter selon tes choix (enonce: selection de variables)
+    k_features = 13
 
-    # 3) Création + fit + sauvegarde du pipeline final
     final_pipeline = create_and_save_cv_pipeline(
         best_estimator=best_estimator,
         k_features=k_features,
         X_raw=X_raw,
         y=y,
-        pickle_name="credit_scoring_cv.pkl"
+        pickle_name="credit_scoring_cv.pkl",
     )
 
-    print("=========== ORCHESTRATION CV TERMINÉE ✅ ===========")
+    print("CV orchestration finished.")
     return final_pipeline, best_name, best_score, res_acp
-
-
-
