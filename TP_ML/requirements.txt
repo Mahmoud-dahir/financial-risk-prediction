@@ -1,0 +1,22 @@
+# API et interface web
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+
+# Machine learning et traitement des données
+# Version fixée car les fichiers .pkl ont été sérialisés avec scikit-learn 1.7.2.
+scikit-learn==1.7.2
+numpy>=1.26,<3.0
+pandas>=2.1,<3.0
+matplotlib>=3.8,<4.0
+
+# Modèles et explicabilité utilisés dans le notebook
+xgboost>=3.1,<4.0
+shap>=0.46,<1.0
+
+# Tests manuels de l'API depuis le notebook
+requests>=2.31,<3.0
+
+# Exécution du notebook
+jupyterlab>=4.0,<5.0
+ipykernel>=6.29,<7.0

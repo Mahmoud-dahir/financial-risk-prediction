@@ -3,9 +3,11 @@ from pathlib import Path
 import pickle
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-
 
 app = FastAPI(
     title="Credit Scoring API",
@@ -13,7 +15,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
-MODEL_PATH = Path("credit_scoring.pkl")
+BASE_DIR = Path(__file__).resolve().parent
+
+MODEL_PATH = BASE_DIR / "credit_scoring.pkl"
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(BASE_DIR / "static")),
+    name="static",
+)
+
+templates = Jinja2Templates(
+    directory=str(BASE_DIR / "templates")
+)
 pipeline = None  # chargé au démarrage (startup)
 
 
@@ -63,6 +77,13 @@ def read_root():
         "usage": "Appelle POST /predict/ avec les 13 features.",
     }
 
+@app.get("/app", response_class=HTMLResponse)
+def credit_scoring_app(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={},
+    )
 
 @app.get("/health")
 def health():
